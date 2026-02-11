@@ -13,6 +13,7 @@ description: Use when building .NET 10 or C# 14 applications; when using minimal
 
 | File | Topics |
 |------|--------|
+| [general.md](general.md) | Local development workflow, migrations, coding philosophy, general rules |
 | [csharp.md](csharp.md) | Extension blocks, `field` keyword, null-conditional assignment |
 | [minimal-apis.md](minimal-apis.md) | Validation, TypedResults, filters, modular monolith, vertical slices |
 | [security.md](security.md) | JWT auth, CORS, rate limiting, OpenAPI security, middleware order |
@@ -256,3 +257,19 @@ See [anti-patterns.md](anti-patterns.md) for complete list.
 | Serilog | `Serilog.AspNetCore` | Logging |
 
 See [libraries.md](libraries.md) for usage examples.
+
+## Code Philosophy Quick Reference
+
+Don't favor backwards compatibility, favor:
+- **Features**: Build new functionality and improve the product
+- **Proper cleanup**: Remove deprecated code, simplify architecture, eliminate technical debt
+- **Fixing root causes**: When something breaks, fix the root
+
+---
+
+## General Rules
+
+- **Read before edit**: Always read existing code before proposing changes
+- **Preserve patterns**: Follow existing code style and conventions
+- **Don't over-engineer**: Keep changes minimal and focused
+- **Never push**: Never push to remote
