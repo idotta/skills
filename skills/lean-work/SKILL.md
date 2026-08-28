@@ -1,6 +1,6 @@
 ---
 name: lean-work
-description: Lean coding style: ask material questions early, delegate broad exploration when worthwhile, answer directly, and minimize comments and docs. Use for /lean-work or requests for lean, terse, or context-efficient work.
+description: "Lean coding style: ask material questions early, delegate broad exploration when worthwhile, answer directly, and minimize comments and docs. Use for /lean-work or requests for lean, terse, or context-efficient work."
 ---
 
 # Lean work
