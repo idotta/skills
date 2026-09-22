@@ -31,9 +31,13 @@ if [ "${HERDR_ENV:-}" != 1 ]; then
   echo "not inside Herdr - stop" >&2
   exit 1
 fi
-herdr pane list --workspace "$HERDR_WORKSPACE_ID" | tr '{},' '\n\n\n' \
-  | awk -F'"' -v tab="$HERDR_TAB_ID" '/"label":/{l=$4} /"pane_id":/{p=$4}
-      /"tab_id":/{if($4==tab) print (l==""?"(unlabelled)":l)"\t"p; l=""; p=""}'
+herdr pane list --workspace "$HERDR_WORKSPACE_ID" | python3 -c '
+import json, os, sys
+tab = os.environ["HERDR_TAB_ID"]
+for pane in json.load(sys.stdin)["result"]["panes"]:
+    if pane.get("tab_id") == tab:
+        print((pane.get("label") or "(unlabelled)") + "\t" + pane["pane_id"])
+'
 herdr agent list
 ```
 
@@ -49,9 +53,11 @@ if ($env:HERDR_ENV -ne '1') {
 herdr agent list
 ```
 
-Keys arrive alphabetically, so `label` precedes `pane_id` precedes `tab_id` within a pane — hence the
-field order above. **Clear `l` after each pane**: an unlabelled pane otherwise inherits the previous
-pane's label and resolves to the wrong ID.
+Parse Herdr JSON as JSON. A line-oriented `awk` or `sed` parse resolves unlabelled panes to the wrong
+ID without erroring, and **any positional field — a dollar sign followed by a digit — is replaced by
+the skill's own arguments before you read this file**, fenced code included. Check `command -v jq
+python3` before depending on either; a watcher built on a missing `jq` emits nothing rather than
+failing.
 
 Join `agent list` to the labelled panes by `pane_id`. Each of `master`, `planner`, `coder` and
 `verifier` must occur exactly once on `$HERDR_TAB_ID`; on a missing or duplicate role, say which and
@@ -71,9 +77,11 @@ writable directory exists, ask the owner to designate or authorize one; do not s
 state into tracked files.
 
 `PLAN.md` (master: unit table with status, locked owner decisions, what is out of scope) is the record,
-not your context. Beside it: `job-<unit>-<slug>.md` (planner→coder),
-`report-u<unit>.md` (coder: files written, revert table, open questions), `verify-<unit>.md`
-(planner→verifier), `verify-u<unit>.md` (verifier: verdict, real counts, which proofs it ran),
+not your context. Beside it, with `brief-` for an instruction and `report-` for a result so that `ls`
+answers "is this round finished?": `brief-planner-u<unit>.md` (master→planner),
+`brief-coder-u<unit>.md` (planner→coder), `report-coder-u<unit>.md` (coder: files written, revert
+table, open questions), `brief-verifier-u<unit>.md` (planner→verifier),
+`report-verifier-u<unit>.md` (verifier: verdict, real counts, which proofs it ran),
 `baseline-u<unit>/` (pre-unit status, staged and unstaged binary diffs, and hashes or copies of
 pre-existing untracked files), and `mutation-u<unit>.md` (revert-proof crash journal, one row per
 mutation).
@@ -116,6 +124,7 @@ master does steps 1, 2, the gate/CI exception in step 4, and step 6 only.
 
    ```bash
    herdr agent send-keys <planner> ctrl+u
+   sleep 1   # sent too fast, the reset no-ops silently
    herdr agent prompt <planner> "<reset>"
    # confirm a fresh session before continuing
    herdr agent send-keys <planner> ctrl+u
@@ -130,6 +139,7 @@ master does steps 1, 2, the gate/CI exception in step 4, and step 6 only.
 
    ```powershell
    herdr agent send-keys $planner 'ctrl+u'
+   Start-Sleep -Seconds 1   # sent too fast, the reset no-ops silently
    herdr agent prompt $planner '<reset>'
    # confirm a fresh session before continuing
    $brief = Get-Content -Raw -LiteralPath $briefFile
@@ -169,7 +179,10 @@ Claude Code's Bash tool allows at most 10 minutes and defaults to 2. A foregroun
 mid-job and the pane then looks stalled while it is still working. Dispatch it with the host's
 background mechanism (`run_in_background` in Claude Code) and collect the result afterwards.
 
-A settled state alone is not completion: require the expected report file. On
+A settled state alone is not completion: require the expected report file. `--wait` returns when the
+pane you dispatched settles, which a planner does while the coder it dispatched is still working, so
+poll both from master: `until [ -f "<report>" ] && [ "$(herdr agent get <pane> …)" != working ]; do
+sleep 15; done`. A premature `done` is indistinguishable from success in `herdr pane list`. On
 `agent_prompt_stalled` or timeout, do not resend blindly because the prompt may still have landed;
 inspect `agent get`, `agent read` and the report path first. `blocked` requires intervention, not a
 PASS. `<reset>` is the exception to job dispatch: send it without `--wait` and confirm the new session
@@ -190,6 +203,15 @@ branch, confirm the job fails on the condition the change is meant to catch, the
 and cite both runs. Where no faithful failing condition can be staged, the edit is owner-reviewed
 rather than verifier-proved and the report says exactly that. A green run alone is never recorded as
 proof of a CI change.
+
+The CI sibling of "a mutation must compile": the mutation must be **enactable**, and the run must
+show it reached the built artifact, not just the source. A condition the build never propagates
+yields an honest green carrying no information — so when a probe is green while carrying a mutation,
+suspect the assertion before the mutation. A workflow that does not yet exist on the default branch
+cannot be proved by pushing a branch (`workflow_dispatch` 404s, `push:` gates may not fire); only a
+pull request runs it from its own head, so with owner approval open a draft PR titled `DO NOT MERGE`,
+capture both runs, then close it and delete the branch. Since no agent pushes, master authors and
+pushes the probe commit — the verifier still judges the two runs.
 
 ### The slash trap
 
@@ -223,6 +245,11 @@ from and the existing file whose idiom to follow ("follow the idiom in `<file>`"
 · for coder, the revert table (§6) and: files written, anything the gate needs, tests that could not
 be written faithfully with the reason, questions the sources could not answer.
 
+**Only master loads this skill.** Every rule here reaches a downstream agent only if the brief
+carries it, so each brief that dispatches another agent restates: report only when the report file
+exists and the dispatched pane has left `working`; reset with the confirmation step above; write the
+file, reply with the path.
+
 The master→planner brief is the exception: include the planner, coder and verifier host map with each
 role's invocation syntax, plus all host addenda. The planner must re-resolve a downstream pane before
 dispatch and update the map if its occupant changed.
@@ -242,7 +269,9 @@ bites; this is what catches a test that pins something other than its name claim
 its own deadline.
 
 A proof run keeps **one** journal outside the worktree, `mutation-u<unit>.md`, with one row per
-mutation. Snapshot the worktree once at the head of the run — porcelain status, staged and unstaged
+mutation, State updated **in place** `PENDING` → `RESTORED` — one table, never a separate closure
+table, and the bare word `PENDING` never in prose, so that `grep -c '| PENDING |'` stays the
+canonical check. Snapshot the worktree once at the head of the run — porcelain status, staged and unstaged
 binary diffs, untracked file hashes — not per row; a 20-row table would otherwise carry 40 snapshots
 to defend against a single failure mode. Each row is written **before** the source is touched: status
 `PENDING`, file path, pre-mutation hash, the exact reverse content or patch, and the intended
@@ -277,7 +306,9 @@ a comment naming the invariant and say so in the report instead of padding the s
 
 ## 8. master never
 
-Runs the build while an agent holds it, even "just to check" · commits, stages or pushes unasked · edits
+Runs the build while an agent holds it, even "just to check" — probing the environment before unit 1
+(runtime usable, image cached, tool works offline) is expected, and its findings belong in `PLAN.md`
+· commits, stages or pushes unasked, beyond an approved CI probe it does not judge · edits
 production code or ordinary tests · lets coder or verifier edit the architecture gate or CI config ·
 validates its own gate or CI edit · accepts a gate without verifier's red/green bite proof · records a
 CI edit as proved on a green run alone · dispatches a `--wait` job in the foreground · spawns a
