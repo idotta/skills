@@ -9,7 +9,7 @@ Four Herdr panes, one campaign, one unit in flight at a time.
 
 | Role | Does | Never |
 |---|---|---|
-| **master** (you) | Owns the plan. Drives **planner only**. Defines units, reports to the owner, asks about commits. Owns architecture-gate and CI edits under §4. | Builds. Edits production code or ordinary tests. Verifies its own gate or CI edit. Talks to coder or verifier. |
+| **master** | Owns the plan. Drives **planner only**. Defines units, reports to the owner, asks about commits. Owns architecture-gate and CI edits under §4. | Builds, beyond the environment probe before unit 1 (§3). Edits production code or ordinary tests. Verifies its own gate or CI edit. Talks to coder or verifier. |
 | **planner** | Owns the unit-local coder/verifier loop and reports its terminal outcome. | Builds while coder or verifier works. |
 | **coder** | Builds the unit. Owns the build tool for its job. | Verifies its own work. Touches the gate. Commits. |
 | **verifier** | Reads the diff, runs the suites, executes revert proofs. Owns the build tool for its job. | Fixes what it finds — it reports; planner re-dispatches coder. |
@@ -31,9 +31,13 @@ if [ "${HERDR_ENV:-}" != 1 ]; then
   echo "not inside Herdr - stop" >&2
   exit 1
 fi
-herdr pane list --workspace "$HERDR_WORKSPACE_ID" | tr '{},' '\n\n\n' \
-  | awk -F'"' -v tab="$HERDR_TAB_ID" '/"label":/{l=$4} /"pane_id":/{p=$4}
-      /"tab_id":/{if($4==tab) print (l==""?"(unlabelled)":l)"\t"p; l=""; p=""}'
+herdr pane list --workspace "$HERDR_WORKSPACE_ID" | python3 -c '
+import json, os, sys
+tab = os.environ["HERDR_TAB_ID"]
+for pane in json.load(sys.stdin)["result"]["panes"]:
+    if pane.get("tab_id") == tab:
+        print((pane.get("label") or "(unlabelled)") + "\t" + pane["pane_id"])
+'
 herdr agent list
 ```
 
@@ -49,9 +53,11 @@ if ($env:HERDR_ENV -ne '1') {
 herdr agent list
 ```
 
-Keys arrive alphabetically, so `label` precedes `pane_id` precedes `tab_id` within a pane — hence the
-field order above. **Clear `l` after each pane**: an unlabelled pane otherwise inherits the previous
-pane's label and resolves to the wrong ID.
+Parse Herdr JSON as JSON. A line-oriented `awk` or `sed` parse resolves unlabelled panes to the wrong
+ID without erroring, and **any positional field — a dollar sign followed by a digit — is replaced by
+the skill's own arguments before you read this file**, fenced code included. Check `command -v jq
+python3` before depending on either; a watcher built on a missing `jq` emits nothing rather than
+failing.
 
 Join `agent list` to the labelled panes by `pane_id`. Each of `master`, `planner`, `coder` and
 `verifier` must occur exactly once on `$HERDR_TAB_ID`; on a missing or duplicate role, say which and
@@ -71,9 +77,12 @@ writable directory exists, ask the owner to designate or authorize one; do not s
 state into tracked files.
 
 `PLAN.md` (master: unit table with status, locked owner decisions, what is out of scope) is the record,
-not your context. Beside it: `job-<unit>-<slug>.md` (planner→coder),
-`report-u<unit>.md` (coder: files written, revert table, open questions), `verify-<unit>.md`
-(planner→verifier), `verify-u<unit>.md` (verifier: verdict, real counts, which proofs it ran),
+not your context. Beside it, with `brief-` for an instruction and `report-` for a result so that `ls`
+answers "is this round finished?": `brief-planner-u<unit>.md` (master→planner),
+`report-planner-u<unit>.md` (planner: terminal outcome), `brief-coder-u<unit>.md` (planner→coder),
+`report-coder-u<unit>.md` (coder: files written, revert table, open questions),
+`brief-verifier-u<unit>.md` (planner→verifier),
+`report-verifier-u<unit>.md` (verifier: verdict, real counts, which proofs it ran),
 `baseline-u<unit>/` (pre-unit status, staged and unstaged binary diffs, and hashes or copies of
 pre-existing untracked files), and `mutation-u<unit>.md` (revert-proof crash journal, one row per
 mutation).
@@ -95,8 +104,17 @@ TUIs may use alternate-screen rendering or truncate scrollback, so spoken output
    (architecture gates, CI config — **master's** to own); model families banned for subagents.
    Re-resolve the applicable files before every unit so an instruction changed during the campaign
    cannot leave later briefs stale.
-3. Size units so one coder job plus one verifier job closes them; put them in `PLAN.md`.
-4. Put open questions to the owner **before** the unit that depends on them, with a recommendation, not
+3. Before unit 1, while no agent holds the build tool, probe the environment (runtime usable, image
+   cached, tool works offline) and record the findings in `PLAN.md`.
+4. Size units in `PLAN.md` by behaviour, not job count: **one unit is one reachable behaviour**,
+   committed on its own. List a unit's behaviours before briefing; more than one means more than one
+   unit. The planner splits the unit into coder steps, **each one slice of that behaviour: one or two
+   named tests, the production lines that make them pass, about three files**, statable in one sentence
+   or split again. Size for verifiability, not capability: a narrow step fails visibly and its proofs
+   stay checkable, whatever the model; slower is fine. Give the planner the limit, never a step list —
+   a suggested list gets relayed to the coder as one multi-concern job. Read the unit's first coder
+   brief when it lands and stop the planner if it breaks the limit.
+5. Put open questions to the owner **before** the unit that depends on them, with a recommendation, not
    a survey. Never open a unit with a question still open inside it.
 
 ## 4. The unit cycle
@@ -109,13 +127,18 @@ master does steps 1, 2, the gate/CI exception in step 4, and step 6 only.
    Check for a `PENDING` row in any mutation journal first and recover it under §6 before interpreting
    the tree.
    Then write the unit brief into the campaign dir (§5).
-2. **Clear and re-brief planner** — its context is not meant to survive a unit. Use the syntax for the
-   current shell. `<reset>` is `/clear` for Claude, `/new` for Codex.
+2. **Clear and re-brief planner** — at every unit start and after every planner return. Never append
+   to a returned planner session; at high context it compacts mid-job. Before any re-dispatch, rename
+   the superseded planner report so the watcher does not fire on it. After an owner decision, a block or
+   a gate/CI return, record the outcome in `PLAN.md` and dispatch a self-contained resume brief: the
+   unit brief, latest planner report, decision and remaining work. Use the syntax for the current
+   shell. `<reset>` is `/clear` for Claude, `/new` for Codex.
 
    POSIX shell (Linux or macOS):
 
    ```bash
    herdr agent send-keys <planner> ctrl+u
+   sleep 1   # sent too fast, the reset no-ops silently
    herdr agent prompt <planner> "<reset>"
    # confirm a fresh session before continuing
    herdr agent send-keys <planner> ctrl+u
@@ -130,6 +153,7 @@ master does steps 1, 2, the gate/CI exception in step 4, and step 6 only.
 
    ```powershell
    herdr agent send-keys $planner 'ctrl+u'
+   Start-Sleep -Seconds 1   # sent too fast, the reset no-ops silently
    herdr agent prompt $planner '<reset>'
    # confirm a fresh session before continuing
    $brief = Get-Content -Raw -LiteralPath $briefFile
@@ -152,10 +176,20 @@ master does steps 1, 2, the gate/CI exception in step 4, and step 6 only.
 5. planner owns the unit-local loop: FAIL goes back to coder with a fix brief, then to verifier again;
    PASS closes the unit. It may run small, bounded repair rounds without returning to master. Return
    only on PASS, a master-owned gate/CI change, a required owner decision or scope change, or repeated
-   failure that needs replanning.
+   failure that needs replanning. **Verify per step, gate per unit:** each step's verifier reviews the
+   step diff, runs only that step's focused tests, and runs at least one revert proof itself. Once, at
+   unit end, one verifier job runs the full suites, the build and format gates over the whole delta from
+   `baseline-u<unit>/`, and records the SHA256 of every delta file. Full suites per step cost minutes
+   and catch little the unit-end run misses.
 6. **master updates `PLAN.md`**, reports to the owner in a few lines, asks whether to commit. Before
    accepting a PASS, confirm the report says verifier executed the proofs itself — a body disclosing
-   proofs it declined to run overrides its own verdict line, and the unit stays open.
+   proofs it declined to run overrides its own verdict line, and the unit stays open. Then compare the
+   SHA256 of every file in the delta with the verifier's final report. A file that changed after the
+   verifier's run was never verified. Then read the planner's final report and the delta file list
+   against the unit's charge in `PLAN.md`, without building: every step can pass while the unit still
+   misses its behaviour. The owner may pre-authorize **chaining**: master commits each verified unit
+   and opens the next without asking. It still stops for an owner decision, a gate/CI change, a
+   mis-sized unit, or physical/hardware work. Record the authorization and its end point in `PLAN.md`.
 
 For a job dispatch, use `herdr agent prompt ... --wait --timeout <ms>` from a confirmed non-working
 state. Herdr first requires observed `working` or `blocked`, then waits for `idle`, `done` or
@@ -169,11 +203,30 @@ Claude Code's Bash tool allows at most 10 minutes and defaults to 2. A foregroun
 mid-job and the pane then looks stalled while it is still working. Dispatch it with the host's
 background mechanism (`run_in_background` in Claude Code) and collect the result afterwards.
 
-A settled state alone is not completion: require the expected report file. On
-`agent_prompt_stalled` or timeout, do not resend blindly because the prompt may still have landed;
-inspect `agent get`, `agent read` and the report path first. `blocked` requires intervention, not a
-PASS. `<reset>` is the exception to job dispatch: send it without `--wait` and confirm the new session
-as described above before sending the brief.
+**Completion is the watcher, not the dispatch.** `--wait` returns when the dispatched pane settles,
+which a planner does while its coder is still working, and a planner job routinely outlives its
+timeout: a three-step unit can take two hours. Neither `done` nor `timeout` proves anything, and
+neither is a reason to resend. Run one light background watcher per unit — idle master time is the
+costliest loss — polling every 60 s and exiting on the first of:
+
+- `DONE`: `report-planner-u<unit>.md` exists and no role pane is `working`.
+- `BLOCKED`: any pane is `blocked`. That needs intervention, not a PASS.
+- `STALLED`: no pane `working` for three polls and no report. The planner stopped on a question, or
+  its dispatch died.
+
+Put waits inside the background loop; Claude Code blocks a foreground `sleep` chained before a check.
+If the harness reaps a background task — the dispatch or the watcher — the delivered prompt survives
+and the unit keeps running: report the reap, and restart the watcher only when the owner asks. On
+`agent_prompt_stalled` or a timeout, never resend blindly; the prompt may still have landed. Inspect
+`agent get`, `agent read` and the report path first. `<reset>` is the exception to job dispatch:
+send it without `--wait` and confirm the new session as described above before sending the brief.
+
+**Stalls and silent blocks.** A coder on a thinking spinner for 20+ minutes with no file write and no
+build process is stalled, though its planner may judge it busy. Master may send the working planner a
+short evidence message (Codex queues it into the turn); the planner interrupts the coder, resets it,
+and re-dispatches the step from its partial edits. Master still never messages coder or verifier. An
+agent that answers a brief with an authentication error ("Login expired") has done nothing: the
+planner returns BLOCKED with the exact text instead of retrying, and the owner logs that pane in.
 
 ### Master-owned gate proof
 
@@ -185,11 +238,20 @@ the new rule, confirms the targeted test fails for that rule, restores through t
 and reruns the targeted test green before the broader required suite. If no faithful compiling
 violation exists, verifier reports that the rule is unproved instead of declaring PASS.
 
-For a **CI** file the bite is the same shape where it can be staged: only with explicit owner approval, push the change on a probe
-branch, confirm the job fails on the condition the change is meant to catch, then confirm it green,
-and cite both runs. Where no faithful failing condition can be staged, the edit is owner-reviewed
-rather than verifier-proved and the report says exactly that. A green run alone is never recorded as
-proof of a CI change.
+For a **CI** file the bite is the same shape where it can be staged: only with explicit owner
+approval, push the change on a probe branch, confirm the job fails on the condition the change is
+meant to catch, then confirm it green, and cite both runs. Where no faithful failing condition can be
+staged, the edit is owner-reviewed rather than verifier-proved and the report says exactly that. A
+green run alone is never recorded as proof of a CI change.
+
+As a gate mutation must compile, a CI mutation must be **enactable**: the run must show it reached the
+built artifact, not just the source. A condition the build never propagates yields an honest green
+carrying no information, so when a probe is green while carrying a mutation, suspect the assertion
+before the mutation. A workflow that does not yet
+exist on the default branch cannot be proved by pushing a branch (`workflow_dispatch` 404s, `push:`
+gates may not fire); only a pull request runs it from its own head, so with owner approval open a
+draft PR titled `DO NOT MERGE`, capture both runs, then close it and delete the branch. Since no agent
+pushes, master authors and pushes the probe commit — the verifier still judges the two runs.
 
 ### The slash trap
 
@@ -221,11 +283,25 @@ skill invocation · the common constraint block plus only the target's matching 
 output path, and "reply with only that path, the verdict and the counts" · the source of truth to work
 from and the existing file whose idiom to follow ("follow the idiom in `<file>`" beats describing it)
 · for coder, the revert table (§6) and: files written, anything the gate needs, tests that could not
-be written faithfully with the reason, questions the sources could not answer.
+be written faithfully with the reason, questions the sources could not answer · the spec sources that
+define "right" (plan, research, owner decisions), not only code idioms — code yardsticks alone get
+code-quality answers to a domain question.
 
-The master→planner brief is the exception: include the planner, coder and verifier host map with each
-role's invocation syntax, plus all host addenda. The planner must re-resolve a downstream pane before
-dispatch and update the map if its occupant changed.
+Put the constraint block in one campaign file that every brief points to by path. But **any fact an
+agent needs before it can read that file goes in the brief body, as its first paragraph** — a Codex
+pane whose default launcher fails cannot open the file that tells it how to escalate. Keep a coder
+brief to about 40 lines.
+
+**Only master loads this skill**, so a rule reaches another agent only if a brief carries it. Each
+brief that dispatches another agent restates: report only when the report file exists and the
+dispatched pane has left `working`; reset with the confirmation step above; write the file, reply with
+the path.
+
+The master→planner brief is the exception to one addendum per brief: it carries the planner, coder and
+verifier host map with each role's invocation syntax, all host addenda, the step-size limit (§3), and
+the stall and authentication rules (§4). The planner re-resolves a downstream pane before dispatch and
+updates the map if its occupant changed. Its job is **control, not relay**: it never forwards the
+master brief to the coder.
 
 Sequence agents that would touch the same file. Two agents on one file is a lost edit.
 
@@ -242,9 +318,10 @@ bites; this is what catches a test that pins something other than its name claim
 its own deadline.
 
 A proof run keeps **one** journal outside the worktree, `mutation-u<unit>.md`, with one row per
-mutation. Snapshot the worktree once at the head of the run — porcelain status, staged and unstaged
-binary diffs, untracked file hashes — not per row; a 20-row table would otherwise carry 40 snapshots
-to defend against a single failure mode. Each row is written **before** the source is touched: status
+mutation, State updated **in place** `PENDING` → `RESTORED` — one table, never a separate closure
+table, and the bare word `PENDING` never in prose, so that `grep -c '| PENDING |'` stays the
+canonical check. Snapshot the worktree once at the head of the run — porcelain status, staged and
+unstaged binary diffs, untracked file hashes — not per row. Each row is written **before** the source is touched: status
 `PENDING`, file path, pre-mutation hash, the exact reverse content or patch, and the intended
 mutation. After the red run, restore by content, confirm the file hash matches the row, mark the row
 `RESTORED`. Re-check the run snapshot once at the end of the run. Gate proofs use the same journal.
@@ -277,9 +354,13 @@ a comment naming the invariant and say so in the report instead of padding the s
 
 ## 8. master never
 
-Runs the build while an agent holds it, even "just to check" · commits, stages or pushes unasked · edits
-production code or ordinary tests · lets coder or verifier edit the architecture gate or CI config ·
-validates its own gate or CI edit · accepts a gate without verifier's red/green bite proof · records a
-CI edit as proved on a green run alone · dispatches a `--wait` job in the foreground · spawns a
-subagent on a model family the owner ruled out · works from a remembered pane layout, or writes one
-down.
+Runs the build while an agent holds it, even "just to check" · commits, stages or pushes unasked —
+recorded chaining and an owner-approved CI probe, which it does not judge, are the only pre-authorized
+commits or pushes · commits a file whose hash
+differs from the verifier's final run · edits production code or ordinary tests · lets coder or
+verifier edit the architecture gate or CI config · validates its own gate or CI edit · accepts a gate
+without verifier's red/green bite proof · records a CI edit as proved on a green run alone · opens a
+multi-behaviour unit, or hands the planner a step list · re-briefs a planner without resetting it ·
+dispatches a `--wait` job in the foreground, reads its timeout as a failure, or runs a unit without a
+watcher · spawns a subagent on a
+model family the owner ruled out · works from a remembered pane layout, or writes one down.
