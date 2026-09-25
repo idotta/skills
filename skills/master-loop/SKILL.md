@@ -90,6 +90,10 @@ mutation).
 **Every agent writes a file and replies with only the path**, a verdict line and the numbers. Agent
 TUIs may use alternate-screen rendering or truncate scrollback, so spoken output is not the record.
 
+**Every report opens with a summary of at most 8 lines**: verdict, counts, files touched, and the proof
+run. Put it before any detail. Its reader opens the body only on FAIL, a surprise in the summary, or
+the unit-end review. A coordinator reading every report in full fills its context by the fifth step.
+
 ## 3. Starting cold
 
 1. Resolve the panes. If the campaign is running, read `PLAN.md` and the latest report first — they, not
@@ -105,7 +109,11 @@ TUIs may use alternate-screen rendering or truncate scrollback, so spoken output
    Re-resolve the applicable files before every unit so an instruction changed during the campaign
    cannot leave later briefs stale.
 3. Before unit 1, while no agent holds the build tool, probe the environment (runtime usable, image
-   cached, tool works offline) and record the findings in `PLAN.md`.
+   cached, tool works offline) and record the findings in `PLAN.md`. For campaigns using `cslq`,
+   include `cslq ready` through the actual host execution route and a narrow semantic query from a
+   later tool call. Record any sandbox restriction and the working invocation for the host addenda.
+   A cold cslq load runs MSBuild's design-time build, so coordinate startup or reload with the build
+   owner under the same serialization rule.
 4. Size units in `PLAN.md` by behaviour, not job count: **one unit is one reachable behaviour**,
    committed on its own. List a unit's behaviours before briefing; more than one means more than one
    unit. The planner splits the unit into coder steps, **each one slice of that behaviour: one or two
@@ -228,6 +236,35 @@ and re-dispatches the step from its partial edits. Master still never messages c
 agent that answers a brief with an authentication error ("Login expired") has done nothing: the
 planner returns BLOCKED with the exact text instead of retrying, and the owner logs that pane in.
 
+**Waits are silent, at every level.** Every poll's output lands in the waiting agent's context. A
+planner that checked its report path, read the other pane's screen and grepped the journal every
+minute reached 90% context in one unit. The rule applies to master and planner alike: wait in one
+command that loops internally and prints exactly one line when it exits (`DONE`, `BLOCKED`,
+`STALLED`, or a timeout). Never poll in a loop of separate tool calls. Never `herdr agent read` or
+`pane read` a working pane just to see progress; read a screen only after the wait reports `STALLED`
+or `BLOCKED`. A host without background jobs runs the wait in the foreground with a timeout under its
+own command budget, then re-issues that same silent wait. The shape, in PowerShell:
+
+```powershell
+$deadline = (Get-Date).AddMinutes(25); $idle = 0
+while ($true) {
+    $state = (herdr agent get $pane | ConvertFrom-Json).result.agent.agent_status
+    if ((Test-Path $report) -and $state -ne 'working') { 'DONE'; break }
+    if ($state -eq 'blocked') { 'BLOCKED'; break }
+    if ($state -ne 'working') { $idle++ } else { $idle = 0 }
+    if ($idle -ge 3) { 'STALLED'; break }
+    if ((Get-Date) -gt $deadline) { 'WAITING'; break }
+    Start-Sleep -Seconds 30
+}
+```
+
+**The planner holds a context limit.** After each step it appends one line to
+`state-u<unit>.md`: step, one-sentence behaviour, verdict, report paths, and the next step. When its
+context passes about 50%, it finishes the current dispatch, writes that line, and returns `CONTEXT`
+in `report-planner-u<unit>.md`. Master renames that report, resets the planner and re-briefs it from
+the unit brief plus the state file (§4.2). Compaction mid-unit loses the step history the planner
+judges against. A reset from a state file does not.
+
 ### Master-owned gate proof
 
 The coder never edits an architecture gate or CI file. The master may make the required edit only in
@@ -292,14 +329,27 @@ agent needs before it can read that file goes in the brief body, as its first pa
 pane whose default launcher fails cannot open the file that tells it how to escalate. Keep a coder
 brief to about 40 lines.
 
+**For Windows Codex roles using cslq under a sandbox that denies named pipes**, put this in the
+brief body and have planner pass it to each applicable downstream role: run `cslq ready` and
+subsequent queries directly through `exec_command` with `sandbox_permissions: "require_escalated"`
+and request `prefix_rule: ["cslq"]`, using the exact repo root as `workdir`. Keep the default
+background session enabled; no dedicated Herdr pane or extra terminal tab is needed. Each host
+must obtain approval through its own mechanism; master approval does not transfer to another
+agent. If escalation is unavailable or denied, report BLOCKED with the exact reason rather than
+retrying sandboxed modes or routing through another pane. Coordinate cold loads or reloads with
+the build owner. Include any known launcher failure and its approved recovery in the first
+paragraph too, so the agent can read the referenced files.
+
 **Only master loads this skill**, so a rule reaches another agent only if a brief carries it. Each
 brief that dispatches another agent restates: report only when the report file exists and the
 dispatched pane has left `working`; reset with the confirmation step above; write the file, reply with
 the path.
 
 The master→planner brief is the exception to one addendum per brief: it carries the planner, coder and
-verifier host map with each role's invocation syntax, all host addenda, the step-size limit (§3), and
-the stall and authentication rules (§4). The planner re-resolves a downstream pane before dispatch and
+verifier host map with each role's invocation syntax, all host addenda, the step-size limit (§3), the
+stall and authentication rules, the silent-wait rule with its snippet, and the context limit with the
+state-file path (§4). It also carries the summary-first report rule for the planner to pass to every
+coder and verifier brief. The planner re-resolves a downstream pane before dispatch and
 updates the map if its occupant changed. Its job is **control, not relay**: it never forwards the
 master brief to the coder.
 
@@ -320,7 +370,9 @@ its own deadline.
 A proof run keeps **one** journal outside the worktree, `mutation-u<unit>.md`, with one row per
 mutation, State updated **in place** `PENDING` → `RESTORED` — one table, never a separate closure
 table, and the bare word `PENDING` never in prose, so that `grep -c '| PENDING |'` stays the
-canonical check. Snapshot the worktree once at the head of the run — porcelain status, staged and
+canonical check. The journal is **append-only across the unit**: each verifier adds rows and edits
+only its own row's state, never rewriting, reordering or trimming the file. One verifier's rewrite
+once erased fifteen earlier proof rows, leaving them attested only in step reports. Snapshot the worktree once at the head of the run — porcelain status, staged and
 unstaged binary diffs, untracked file hashes — not per row. Each row is written **before** the source is touched: status
 `PENDING`, file path, pre-mutation hash, the exact reverse content or patch, and the intended
 mutation. After the red run, restore by content, confirm the file hash matches the row, mark the row
@@ -362,5 +414,6 @@ verifier edit the architecture gate or CI config · validates its own gate or CI
 without verifier's red/green bite proof · records a CI edit as proved on a green run alone · opens a
 multi-behaviour unit, or hands the planner a step list · re-briefs a planner without resetting it ·
 dispatches a `--wait` job in the foreground, reads its timeout as a failure, or runs a unit without a
-watcher · spawns a subagent on a
+watcher · waits by repeated tool calls or reads a working pane's screen for progress instead of one
+silent wait · spawns a subagent on a
 model family the owner ruled out · works from a remembered pane layout, or writes one down.
