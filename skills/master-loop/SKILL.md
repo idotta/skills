@@ -11,7 +11,7 @@ Four Herdr panes, one campaign, one unit in flight at a time.
 |---|---|---|
 | **master** | Owns the plan. Drives **planner only**. Defines units, reports to the owner, asks about commits. Owns architecture-gate and CI edits under §4. | Builds, beyond the environment probe before unit 1 (§3). Edits production code or ordinary tests. Verifies its own gate or CI edit. Talks to coder or verifier. |
 | **planner** | Owns the unit-local coder/verifier loop and reports its terminal outcome. | Builds while coder or verifier works. |
-| **coder** | Builds the unit. Owns the build tool for its job. | Verifies its own work. Touches the gate. Commits. |
+| **coder** | Builds the unit. Owns the build tool for its job, for the build and its step's focused tests only. | Verifies its own work: runs revert proofs, full suites, publishes, stress or live runs (§5). Touches the gate. Commits. |
 | **verifier** | Reads the diff, runs the suites, executes revert proofs. Owns the build tool for its job. | Fixes what it finds — it reports; planner re-dispatches coder. |
 
 **One agent runs the build/test tool at a time, campaign-wide** — planner and master included stay off
@@ -222,6 +222,12 @@ costliest loss — polling every 60 s and exiting on the first of:
 - `STALLED`: no pane `working` for three polls and no report. The planner stopped on a question, or
   its dispatch died.
 
+A pane that started a long background job — a test loop, a publish — goes `idle` while the job runs,
+so a watcher keyed on pane state alone reports `STALLED` on a unit that is working. Count a live
+build or test process as working too. When that check uses `pgrep -f`, bracket the first character
+(`pgrep -f '[t]esthost'`): an unbracketed pattern also matches the watcher's own command line, which
+holds the pattern, so the watcher sees itself as activity and never reports `DONE`.
+
 Put waits inside the background loop; Claude Code blocks a foreground `sleep` chained before a check.
 If the harness reaps a background task — the dispatch or the watcher — the delivered prompt survives
 and the unit keeps running: report the reap, and restart the watcher only when the owner asks. On
@@ -320,7 +326,8 @@ skill invocation · the common constraint block plus only the target's matching 
 output path, and "reply with only that path, the verdict and the counts" · the source of truth to work
 from and the existing file whose idiom to follow ("follow the idiom in `<file>`" beats describing it)
 · for coder, the revert table (§6) and: files written, anything the gate needs, tests that could not
-be written faithfully with the reason, questions the sources could not answer · the spec sources that
+be written faithfully with the reason, questions the sources could not answer · for coder, its exact
+gate commands — the build and its step's focused test filter, nothing more (see below) · the spec sources that
 define "right" (plan, research, owner decisions), not only code idioms — code yardsticks alone get
 code-quality answers to a domain question.
 
@@ -328,6 +335,15 @@ Put the constraint block in one campaign file that every brief points to by path
 agent needs before it can read that file goes in the brief body, as its first paragraph** — a Codex
 pane whose default launcher fails cannot open the file that tells it how to escalate. Keep a coder
 brief to about 40 lines.
+
+**A coder runs the build and its step's focused tests, and stops.** The planner never adds full suites,
+publishes, stress loops, live runs or revert proofs to a coder brief, and the brief says so in one line:
+that is the verifier's job, which repeats every such run anyway. Left unsaid, coders over-deliver: one
+campaign's coders mutated their own revert tables, ran AOT publishes, full suites with reruns, and
+stress loops of 20+ runs — minutes per step that proved nothing the verifier did not re-prove. Two
+exceptions, named in the brief when they apply: a step whose charge *is* reproduction (a flake hunt
+runs as many loops as it needs), and a test-first step, which may show its new test red once before
+the fix.
 
 **For Windows Codex roles using cslq under a sandbox that denies named pipes**, put this in the
 brief body and have planner pass it to each applicable downstream role: run `cslq ready` and
@@ -347,7 +363,7 @@ the path.
 
 The master→planner brief is the exception to one addendum per brief: it carries the planner, coder and
 verifier host map with each role's invocation syntax, all host addenda, the step-size limit (§3), the
-stall and authentication rules, the silent-wait rule with its snippet, and the context limit with the
+coder run limit and its two exceptions (above), the stall and authentication rules, the silent-wait rule with its snippet, and the context limit with the
 state-file path (§4). It also carries the summary-first report rule for the planner to pass to every
 coder and verifier brief. The planner re-resolves a downstream pane before dispatch and
 updates the map if its occupant changed. Its job is **control, not relay**: it never forwards the
@@ -362,7 +378,8 @@ reads exactly like a requirement that was never met.
 ## 6. The one proof rule: the revert table
 
 coder delivers, per test added or changed, **the single production line whose removal or inversion turns
-that test red**. verifier executes a sample — mutate, run that test class alone, confirm red, restore —
+that test red** — reasoned from the code, never executed: a coder mutating the tree to prove its own
+table does the verifier's job without the journal, and the verifier must re-run it anyway. verifier executes a sample — mutate, run that test class alone, confirm red, restore —
 and states which proofs it ran itself versus accepted from the table. The author never verifies its own
 bites; this is what catches a test that pins something other than its name claims, and a test rescued by
 its own deadline.
