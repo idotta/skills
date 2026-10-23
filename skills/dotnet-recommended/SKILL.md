@@ -1,275 +1,41 @@
 ---
 name: dotnet-recommended
-description: Use when building .NET 10 or C# 14 applications; when using minimal APIs, modular monolith patterns, or feature folders; when implementing HTTP resilience, Options pattern, Channels, or validation; when seeing outdated patterns like old extension method syntax
+description: House conventions for .NET 10 / C# 14 work — library choices, minimal API and module layout, testing, and the build loop. Use when writing or changing .NET code.
 ---
 
-# .NET 10 & C# 14 Best Practices
+# .NET conventions
 
-.NET 10 (LTS, Nov 2025) with C# 14. Covers minimal APIs, not MVC.
+These are choices, not general .NET advice. In an existing codebase, its conventions win over this list.
 
-**Official docs:** [.NET 10](https://learn.microsoft.com/en-us/dotnet/core/whats-new/dotnet-10/overview) | [C# 14](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-14) | [ASP.NET Core 10](https://learn.microsoft.com/en-us/aspnet/core/release-notes/aspnetcore-10.0)
+## Loop
 
-## Detail Files
+- After code changes: `dotnet format`, `dotnet build`, `dotnet test`. Fix what they report.
+- Never hand-edit or delete EF migrations. Change the model and generate a new one.
 
-| File | Topics |
-|------|--------|
-| [general.md](general.md) | Local development workflow, migrations, coding philosophy, general rules |
-| [csharp.md](csharp.md) | Extension blocks, `field` keyword, null-conditional assignment |
-| [minimal-apis.md](minimal-apis.md) | Validation, TypedResults, filters, modular monolith, vertical slices |
-| [security.md](security.md) | JWT auth, CORS, rate limiting, OpenAPI security, middleware order |
-| [infrastructure.md](infrastructure.md) | Options, resilience, channels, health checks, caching, Serilog, EF Core, keyed services |
-| [testing.md](testing.md) | WebApplicationFactory, integration tests, auth testing |
-| [anti-patterns.md](anti-patterns.md) | HttpClient, DI captive, blocking async, N+1 queries |
-| [libraries.md](libraries.md) | Mediator, FluentValidation, ErrorOr, Polly |
+## Code
 
----
+- No backwards compatibility: remove deprecated paths, don't add fallbacks or defensive checks that hide bugs. Fix root causes.
+- New code may use C# 14 (extension blocks, `field`, `?.` assignment). Don't rewrite existing code to adopt them.
+- `DateTime.UtcNow`, never `DateTime.Now`.
 
-## Quick Start
+## APIs
 
-```xml
-<Project Sdk="Microsoft.NET.Sdk.Web">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <LangVersion>14</LangVersion>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-</Project>
-```
+- Minimal APIs, not MVC. Return `TypedResults`, not `Results`.
+- Feature folders: `src/Features/<Module>/<Module>Module.cs` registers DI and endpoints; one file per endpoint (request, handler, response). `Shared/` is cross-cutting only.
+- Modules talk through public APIs or events, never another module's `DbContext`.
+- Errors: `AddProblemDetails()` + `UseExceptionHandler()`. Expected domain failures return `ErrorOr<T>`; exceptions are for the unexpected.
 
-```csharp
-var builder = WebApplication.CreateBuilder(args);
+## Libraries
 
-// Core services
-builder.Services.AddValidation();
-builder.Services.AddProblemDetails();
-builder.Services.AddOpenApi();
+| Need | Use |
+|---|---|
+| Validation | Built-in `AddValidation()`; FluentValidation only when rules outgrow attributes |
+| Request handling | Handlers registered in DI per vertical slice; no mediator library |
+| HTTP resilience | `AddStandardResilienceHandler()`, not hand-built Polly pipelines |
+| Options | `.BindConfiguration(...).ValidateDataAnnotations().ValidateOnStart()` |
+| Logging | Serilog |
 
-// Security
-builder.Services.AddAuthentication().AddJwtBearer();
-builder.Services.AddAuthorization();
-builder.Services.AddRateLimiter(opts => { /* see security.md */ });
+## Tests
 
-// Infrastructure
-builder.Services.AddHealthChecks();
-builder.Services.AddOutputCache();
-
-// Modules
-builder.Services.AddUsersModule();
-
-var app = builder.Build();
-
-// Middleware (ORDER MATTERS - see security.md)
-app.UseExceptionHandler();
-app.UseHttpsRedirection();
-app.UseCors();
-app.UseRateLimiter();
-app.UseAuthentication();
-app.UseAuthorization();
-app.UseOutputCache();
-
-app.MapOpenApi();
-app.MapHealthChecks("/health");
-app.MapUsersEndpoints();
-app.Run();
-```
-
----
-
-## Decision Flowcharts
-
-### Result vs Exception
-
-```dot
-digraph {
-    "Error type?" [shape=diamond];
-    "Expected?" [shape=diamond];
-    "Result<T>/ErrorOr" [shape=box];
-    "Exception" [shape=box];
-    "Error type?" -> "Expected?" [label="domain"];
-    "Error type?" -> "Exception" [label="infrastructure"];
-    "Expected?" -> "Result<T>/ErrorOr" [label="yes"];
-    "Expected?" -> "Exception" [label="no"];
-}
-```
-
-### IOptions Selection
-
-```dot
-digraph {
-    "Runtime changes?" [shape=diamond];
-    "Per-request?" [shape=diamond];
-    "IOptions<T>" [shape=box];
-    "IOptionsSnapshot<T>" [shape=box];
-    "IOptionsMonitor<T>" [shape=box];
-    "Runtime changes?" -> "IOptions<T>" [label="no"];
-    "Runtime changes?" -> "Per-request?" [label="yes"];
-    "Per-request?" -> "IOptionsSnapshot<T>" [label="yes"];
-    "Per-request?" -> "IOptionsMonitor<T>" [label="no"];
-}
-```
-
-### Channel Type
-
-```dot
-digraph {
-    "Trust producer?" [shape=diamond];
-    "Can drop?" [shape=diamond];
-    "Bounded+Wait" [shape=box,style=filled,fillcolor=lightgreen];
-    "Bounded+Drop" [shape=box];
-    "Unbounded" [shape=box];
-    "Trust producer?" -> "Unbounded" [label="yes"];
-    "Trust producer?" -> "Can drop?" [label="no"];
-    "Can drop?" -> "Bounded+Drop" [label="yes"];
-    "Can drop?" -> "Bounded+Wait" [label="no"];
-}
-```
-
----
-
-## Key Patterns Summary
-
-### C# 14 Extension Blocks
-```csharp
-extension<T>(IEnumerable<T> source)
-{
-    public bool IsEmpty => !source.Any();
-}
-```
-
-### .NET 10 Built-in Validation
-```csharp
-builder.Services.AddValidation();
-app.MapPost("/users", (UserDto dto) => TypedResults.Ok(dto));
-```
-
-### TypedResults (Always Use)
-```csharp
-app.MapGet("/users/{id}", async (int id, IUserService svc) =>
-    await svc.GetAsync(id) is { } user
-        ? TypedResults.Ok(user)
-        : TypedResults.NotFound());
-```
-
-### Module Pattern
-```csharp
-public static class UsersModule
-{
-    public static IServiceCollection AddUsersModule(this IServiceCollection s) => s
-        .AddScoped<IUserService, UserService>();
-
-    public static IEndpointRouteBuilder MapUsersEndpoints(this IEndpointRouteBuilder app)
-    {
-        var g = app.MapGroup("/api/users").WithTags("Users");
-        g.MapGet("/{id}", GetUser.Handle);
-        return app;
-    }
-}
-```
-
-### HTTP Resilience
-```csharp
-builder.Services.AddHttpClient<IApi, ApiClient>()
-    .AddStandardResilienceHandler();
-```
-
-### Error Handling (RFC 9457)
-```csharp
-builder.Services.AddProblemDetails();
-app.UseExceptionHandler();
-app.UseStatusCodePages();
-```
-
----
-
-## MANDATORY Patterns (Always Use These)
-
-| Task | ✅ ALWAYS Use | ❌ NEVER Use |
-|------|--------------|--------------|
-| Extension members | C# 14 `extension<T>()` blocks | Traditional `this` extension methods |
-| Property validation | C# 14 `field` keyword | Manual backing fields |
-| Null assignment | `obj?.Prop = value` | `if (obj != null) obj.Prop = value` |
-| API returns | `TypedResults.Ok()` | `Results.Ok()` |
-| Options validation | `.ValidateOnStart()` | Missing validation |
-| HTTP resilience | `AddStandardResilienceHandler()` | Manual Polly configuration |
-| Timestamps | `DateTime.UtcNow` | `DateTime.Now` |
-
----
-
-## Quick Reference Card
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    .NET 10 / C# 14 PATTERNS                      │
-├─────────────────────────────────────────────────────────────────┤
-│ EXTENSION PROPERTY:  extension<T>(IEnumerable<T> s) {           │
-│                        public bool IsEmpty => !s.Any();         │
-│                      }                                          │
-├─────────────────────────────────────────────────────────────────┤
-│ FIELD KEYWORD:       public string Name {                       │
-│                        get => field;                            │
-│                        set => field = value?.Trim();            │
-│                      }                                          │
-├─────────────────────────────────────────────────────────────────┤
-│ OPTIONS VALIDATION:  .BindConfiguration(Section)                │
-│                      .ValidateDataAnnotations()                 │
-│                      .ValidateOnStart();   // CRITICAL!         │
-├─────────────────────────────────────────────────────────────────┤
-│ HTTP RESILIENCE:     .AddStandardResilienceHandler();           │
-├─────────────────────────────────────────────────────────────────┤
-│ TYPED RESULTS:       TypedResults.Ok(data)                      │
-│                      TypedResults.NotFound()                    │
-│                      TypedResults.Created(uri, data)            │
-├─────────────────────────────────────────────────────────────────┤
-│ ERROR PATTERN:       ErrorOr<User> or user?.Match(...)          │
-├─────────────────────────────────────────────────────────────────┤
-│ IOPTIONS:            IOptions<T>        → startup, no reload    │
-│                      IOptionsSnapshot<T> → per-request reload   │
-│                      IOptionsMonitor<T>  → live + OnChange()    │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Anti-Patterns Quick Reference
-
-| Anti-Pattern | Fix |
-|--------------|-----|
-| `new HttpClient()` | Inject `HttpClient` or `IHttpClientFactory` |
-| `Results.Ok()` | `TypedResults.Ok()` |
-| Manual Polly config | `AddStandardResilienceHandler()` |
-| Singleton → Scoped | Use `IServiceScopeFactory` |
-| `GetAsync().Result` | `await GetAsync()` |
-| Exceptions for flow | Use `ErrorOr<T>` Result pattern |
-| `DateTime.Now` | `DateTime.UtcNow` |
-| Missing `.ValidateOnStart()` | Always add to Options registration |
-
-See [anti-patterns.md](anti-patterns.md) for complete list.
-
----
-
-## Libraries Quick Reference
-
-| Library | Package | Purpose |
-|---------|---------|---------|
-| FluentValidation | `FluentValidation.DependencyInjectionExtensions` | Validation |
-| ErrorOr | `ErrorOr` | Result pattern |
-| Polly | `Microsoft.Extensions.Http.Resilience` | Resilience |
-| Serilog | `Serilog.AspNetCore` | Logging |
-
-See [libraries.md](libraries.md) for usage examples.
-
-## Code Philosophy Quick Reference
-
-Don't favor backwards compatibility, favor:
-- **Features**: Build new functionality and improve the product
-- **Proper cleanup**: Remove deprecated code, simplify architecture, eliminate technical debt
-- **Fixing root causes**: When something breaks, fix the root
-
----
-
-## General Rules
-
-- **Read before edit**: Always read existing code before proposing changes
-- **Preserve patterns**: Follow existing code style and conventions
-- **Don't over-engineer**: Keep changes minimal and focused
-- **Never push**: Never push to remote
+- xUnit v3 (`dotnet new install xunit.v3.templates`, then `dotnet new xunit3`).
+- Integration tests through `WebApplicationFactory<Program>`.

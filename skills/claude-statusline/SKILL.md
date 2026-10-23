@@ -1,6 +1,6 @@
 ---
 name: claude-statusline
-description: Install or customize the Claude Code status line — the one-line bar under the prompt that shows the model name, reasoning effort, current directory, git branch and dirty flag, and context used. Bundles a ready-made colorized bash script plus a one-command installer that wires up settings.json, and documents the stdin JSON contract so segments and colors can be changed with confidence. Use this whenever the user mentions their statusline / status line / statusLine setting, asks to show the model, effort level, working directory, git branch, or context percentage in their prompt bar, wants to restyle or reorder what is already there, wants the same status line set up on another machine or shared with a repo, or reports that their status line is blank, broken, or showing stale or wrong information — even when they never say the word "statusline".
+description: Install, customize, or debug the Claude Code status line (model, effort, dir, git branch, context %) using a bundled script, installer, and preview renderer.
 ---
 
 # Claude Code status line
