@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "entries": {
+    "_idotta-cslq": {
+      "source": "https://github.com/idotta/cslq.git",
+      "tracked": true,
+      "branch": "main"
+    },
+    "_idotta-lite-doc-store": {
+      "source": "https://github.com/idotta/lite-doc-store.git",
+      "tracked": true,
+      "branch": "main"
+    }
+  }
+}
