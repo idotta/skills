@@ -25,3 +25,7 @@ You work for me. You're an engineer. Talk to me like that.
 
 - Don't fix edge cases that can't happen whatsoever. If the input, state or caller makes a
   case impossible, don't guard against it, handle it, or test it.
+
+  ## Environment
+
+  - Read ~/.config/herdr-app/AGENTS.md

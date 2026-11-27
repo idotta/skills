@@ -10,6 +10,37 @@
       "source": "https://github.com/idotta/lite-doc-store.git",
       "tracked": true,
       "branch": "main"
+    },
+    "skillshare": {
+      "source": "github.com/runkids/skillshare/skills/skillshare",
+      "type": "github-subdir",
+      "installed_at": "2026-11-27T12:37:44.844869092-03:00",
+      "repo_url": "https://github.com/runkids/skillshare.git",
+      "subdir": "skills/skillshare",
+      "version": "58dafb0",
+      "tree_hash": "d8f329085e1f977544ff4bdcec50d99d537a057f",
+      "commit": "58dafb02b070539830fac90051c9271cfe27959d",
+      "file_hashes": {
+        "SKILL.md": "sha256:4307f575b0a0975983edc7c621049cbb823504de3385a29b92723ede92e62b44",
+        "references/TROUBLESHOOTING.md": "sha256:6964001f3f1fcbaadf0daae7478724ffd12196c20c7b3762876385670660cd99",
+        "references/audit-review.md": "sha256:8ce54d8440a56078da8d7a1849000ae985346c950de3c49164eab21049ff2924",
+        "references/audit.md": "sha256:d02da887bdc52a5656527400060fca9ccd3c9a409b8e92c79eb7eb3232398937",
+        "references/backup.md": "sha256:d794b66b18120cfaae0dcb3773031a08426895fd618d02393337a1eb57f98f6f",
+        "references/extras.md": "sha256:0845bb01f48b1ee6c91eee756319e301b224cec0f944b90dbee370934d0dbb57",
+        "references/hooks.md": "sha256:57133feb08f3ad1ca774c9450bcf8ddc79755b990cd44b7b84076019e9cb4bc1",
+        "references/init.md": "sha256:bd5206d3f614c6c32b1c930cc07dd93fe893bb041838af12b612f17f55af78e3",
+        "references/install.md": "sha256:68d159a3c857b219e0bd91a503aabf7cadb82c6b499cf14bbfd0c94e8cbf51f4",
+        "references/log.md": "sha256:f726e59328ac1cb367cd7d5eaa257149d7f56ef5c650d9e0f9c7a091c0f9c442",
+        "references/mcp.md": "sha256:8ba47396b2d8a27bf2b61a79c1ecc752eab5a586ed12c7a8e4c8e47808a16294",
+        "references/memory-review.md": "sha256:e9fabed005f282c6702788bfe1a01aeca986184d48eadccf3ef0e9f4e465f5e3",
+        "references/native-agents.md": "sha256:31b8b5255344310cf259dac99eff19e609ca3d6b99558e66a7cbe5033e2f02d4",
+        "references/plugins.md": "sha256:8ff76a0d0b4d831d8b0b8ea6f78bf0358bf1c3098c8b734c908ded0efb965e4f",
+        "references/status.md": "sha256:f6f88eeb1b6325a0fe6f390ccbf1db0f64d063fec43efe19beff8126ffbf8f9f",
+        "references/sync.md": "sha256:aa2740ae9f92181e318f077ae85250cc8041914dfea67123975de30730276511",
+        "references/targets.md": "sha256:f0b2db33056ee697402b3fbcc172379ab25490751237d0159168a56d6778613f",
+        "references/trash.md": "sha256:2c708df8e50b415b51713bddfbdb8ea95620e35ed49110946fcfcd0047c66945",
+        "scripts/run.sh": "sha256:e434ebdb7d3ae0b37c00ddc36687bc975da9e766b8cb863f9aed9a624ebbdfa9"
+      }
     }
   }
 }

@@ -1,0 +1,157 @@
+# Native hooks
+
+Manage hooks with `skillshare hooks`; use `-g` or `-p` explicitly. Declarations
+live in `hooks.entries` in the selected config. Entries contain `description`,
+optional `enabled` (default true), and `bindings` keyed by receiving Agent.
+Command bindings keep native `events`; Pi, OMP, Amp and OpenCode bindings keep native
+`code`, or `codeFile`: a path relative to the config's folder (no symlinks)
+whose contents are used as `code`; edit that file, then `hooks sync`. Optional command scripts use `files`;
+a value is the contents or `{from: path}`, resolved like `codeFile`. Do not translate native event
+names, matchers, handler types or timeout units across Agents.
+
+OMP writes verbatim `code` to `~/.omp/agent/extensions/skillshare-NAME.ts`,
+`.omp/extensions/skillshare-NAME.ts` in a project, or an explicit account's
+`extensions` directory. It has no project trust prompt: code may execute at the
+next OMP startup, never during Skillshare management. Use OMP's installed
+extension API; Pi compatibility is not guaranteed. Native `hooks/pre` and
+`hooks/post` factories are listed as additional unmanaged sources, not imported.
+Pi and OMP share `PI_CODING_AGENT_DIR`; colliding output paths block before writes.
+
+```bash
+skillshare hooks list --json
+skillshare hooks add check --file ./check.yaml --dry-run --json
+skillshare hooks add check --file ./check.yaml
+skillshare hooks edit check --file ./updated.yaml --sync
+skillshare hooks import --from claude --json
+skillshare hooks sync --dry-run --json
+skillshare hooks sync
+skillshare sync hooks --dry-run --json
+skillshare hooks disable check --sync
+skillshare hooks enable check --sync
+skillshare hooks remove check --sync
+skillshare hooks remove check --keep-files
+skillshare hooks restore BACKUP_ID --dry-run --json
+skillshare hooks restore BACKUP_ID
+```
+
+The file for add/edit is an Entry, without the `hooks.entries` wrapper. Import
+without a name lists candidates; provide a name to save one. Saving an import
+takes over the registrations it read, so the next sync adopts them without
+`--replace`; unknown event names only warn. Import `--file`
+reads supplied native configuration or code with `--from` selecting its dialect.
+No import, preview or sync executes hook commands.
+
+Mutations save source only unless `--sync` is supplied. An empty bindings map
+keeps source without publishing; disabling keeps source and queues removal of
+owned unchanged outputs. `--replace` explicitly replaces an existing source
+or the selected entry's conflicting native output. Never add it to bypass a
+conflict automatically. A stale preview requires refresh (`--revision` can
+require a specific one). Unrelated native settings and unowned hooks survive.
+`remove --keep-files` stops managing an entry: its native entries stay as they
+are, sync no longer touches them, and import offers them again (not with `--sync`).
+
+Agent IDs: `claude`, `codex`, `gemini`, `copilot`, `cursor`, `droid`, `qwen`,
+`antigravity`, `pi`, `omp`, `amp`, `opencode`, `git`; `factory` aliases `droid`, and
+`antigravity-cli`/`agy` alias `antigravity`. Code must match the native
+Agent's installed API version. Check actual destination paths in the inventory
+and preview; global config-directory overrides do not apply to project paths.
+
+Global `hooks.projects` can manage absolute project roots with their own entries
+from one config. Roots with their own `.skillshare/config.yaml` belong in project
+scope. Dashboard destinations show Hooks beside the other managed resources;
+Settings > Backups groups hook backups by Agent and native file.
+
+Backups restore native output, not source definitions. Edited owned outputs
+conflict on sync/removal/restore. Native trust and loading remain controlled by
+the Agent: a successful sync is configuration-generation evidence only.
+
+## Accounts
+
+A global binding key can name a target declared with `agent` and `config_dir`,
+for example `codex-2: {events: ...}` for a Codex account. Claude, Codex, Pi and OMP
+accounts keep their Agent's native format and write into that account home.
+Accounts are global only; project configs and `hooks.projects` bind the Agent.
+Missing account homes are skipped with warnings and never created.
+The `git` key always means Git config hooks; an account named `git` gets no
+hooks, with a warning once an entry uses that binding.
+
+When a native directory environment override points at a declared account home,
+the plain Agent uses its built-in default instead. Other overrides still apply.
+Outputs outside the target's current home, missing homes and removed targets
+keep their ownership and files with a warning; explicitly preview and run
+`hooks sync NAME --replace -g` to release parked ownership without editing files.
+Import uses the account key: `hooks import --from codex-2 -g --json`.
+Each Codex home must trust its own changed hooks through `/hooks`, or run
+`hooks sync --trust -g` (needs `codex` on PATH). It writes the hook files, then
+asks Codex which owned hooks need trust (`unchanged` = already trusted, no answer
+needed). New or command-changed hooks are listed with their commands and confirmed
+once; nothing to trust means no question. `--yes`/`-y` (only with `--trust`) skips
+the question. Without a terminal and without `--yes`, nothing is trusted: it lists
+the hooks and exits with an error naming `--yes`, because Codex's review exists so a
+person sees the command before it runs. `--json` never asks: without `--yes` it
+reports the hooks as `needed` and exits non-zero. Project JSON includes the reason in `codexTrustError`; each verified project hook includes its destination `home`. A home Codex cannot list, or whose
+write fails, is named in the error and does not stop the other homes. Only `trusted_hash` is
+added (disabled hooks are reported, not enabled). A moved or removed hook leaves its
+old entry in `config.toml`; it matches only the same event, matcher and handler at
+that position, so it cannot trust another hook. Use `hooks sync -p --trust` for this checkout. Trust is recorded in each verified user's Codex home, not in the repository; folder trust is never granted. A home that cannot verify every owned command is skipped. Partial completion exits non-zero. `sync hooks` and `hooks list` reject `--trust`; hooks written for `hooks.projects`
+are skipped, so trust those in Codex `/hooks`. `--json` has a `codexTrust` list
+(`target`, `entry`, `key`, `command`, `action`, `disabled`). If Codex fails, files
+are still written and it errors "hook files were written, but Codex trust was not
+recorded". Plain `hooks sync` never touches trust. The dashboard Hooks page
+(global or project mode) does the same after a confirm dialog.
+
+## Git config hooks
+
+Git 2.54+ reads `bindings.git.commands`, keyed by unique friendly names (never
+Git event names). Each value has `events: [pre-commit]`, a single-line `command`
+and optional `parallel` (Git 2.55+). Inline `files` provide executable UTF-8/LF
+helpers; `{files}` expands to their quoted absolute directory on each machine.
+Use a helper for compound shell logic: Git appends event arguments to commands.
+Do not pass those arguments blindly to tools that reject them.
+Use distinct friendly names across global and project commands: Git merges both scopes.
+
+Global output is `$XDG_CONFIG_HOME/git/skillshare/hooks.gitconfig` (default
+`~/.config/git/…`). Include-target precedence is absolute `GIT_CONFIG_GLOBAL`,
+existing `~/.gitconfig`, existing `$XDG_CONFIG_HOME/git/config`, new
+`~/.gitconfig`. Project output is `<git-common-dir>/skillshare/hooks.gitconfig`,
+included from the common `config`; linked worktrees share it. Declare one
+repository top-level root per common directory.
+
+Preview before sync. Regular writable configs receive an owned include;
+symlinks/unwritable targets receive exact manual lines with `inactive` status.
+Old Git is also inactive, with no dispatcher. Plans preserve file actions and
+carry `inactiveReason` separately; synced inactive output is not a pending write. Missing Git or roots skip outputs
+and preserve ownership. Manual and conditional includes stay user-owned,
+including nested includes beneath inactive parent conditions. Unreadable or
+excessively nested declarations block sync. Conditional presence does not prove
+activation. Check `hooks list -g --json`
+(`git`, `projectGit`) and read-only `git hook list --show-scope EVENT`.
+
+The generated include file is owned whole. `--replace` regenerates it after
+backup; never silently discard external edits. A colliding friendly name can
+be replaced only in the writable regular scope target, not system/included
+config. `enabled=false` overrides warn. Config operations use native locks and
+narrow backups, preserving unrelated later settings on restore.
+Git bindings refuse `--keep-files`. Git import, scripts bindings, hookdir
+scanning/recognizers and doctor checks are not implemented in this phase.
+Inspect old hookdir copies manually before migration; Git can execute both.
+Management never executes hooks. Native Windows execution is unverified.
+
+OpenCode probes the installed major with `--version`: v1 keeps flat `.ts` output;
+v2 writes a package directory, manifest and directory URL in `opencode.json(c)`.
+Use `package` instead of `code`/`codeFile` to retain a relative-filename → UTF-8
+contents map, including package.json and dependencies. Native directory imports
+copy to Skillshare-owned output and warn to remove the original after sync.
+No code runs or dependencies install. Provision dependencies before loading.
+Only string server exports or conventional root server/index entries are verified;
+conditional/fallback server exports fail closed. When the version cannot be
+detected (missing or failing binary, unknown major), only OpenCode bindings are
+skipped with a warning; existing OpenCode output stays and other Agents sync.
+A `package` binding on v1 is skipped with a warning. `code` is written as given,
+not checked against the v1 or v2 API.
+
+Windows hook probes resolve standard native npm shims for `opencode-ai` (later
+v1) and `@opencode/cli` (v2), without a shell. Older v1 Node launchers and custom
+batch wrappers fail closed: set the account `cli` to the installed native
+`opencode.exe` absolute path, or put its directory first on `PATH`. No postinstall
+scripts run and missing binaries are not repaired.

@@ -5,21 +5,24 @@
 
 input=$(cat)
 
-# Parse JSON with node (no jq dependency). One field per line.
-parsed=$(printf '%s' "$input" | node -e '
-  let s = "";
-  process.stdin.on("data", d => s += d);
-  process.stdin.on("end", () => {
-    let j = {};
-    try { j = JSON.parse(s); } catch (e) {}
-    const model = ((j.model && j.model.display_name) || "Claude").replace(/[\r\n]+/g, " ");
-    const dir = (j.workspace && j.workspace.current_dir) || "";
-    const rem = (j.context_window && j.context_window.remaining_percentage);
-    const effort = (j.effort && j.effort.level) || "";
-    // Round here, not in bash: bash printf %.0f reads "72.4" against the
-    // shell locale and errors out where the decimal separator is a comma.
-    process.stdout.write(model + "\n" + dir + "\n" + (rem == null ? "" : Math.round(rem)) + "\n" + effort);
-  });
+# Parse JSON with python3 (no jq or node dependency: node is not on PATH in a
+# non-interactive shell, where nvm is not loaded). One field per line.
+parsed=$(printf '%s' "$input" | python3 -I -c '
+import json, sys
+try:
+    j = json.load(sys.stdin)
+except ValueError:
+    j = {}
+if not isinstance(j, dict):
+    j = {}
+g = lambda o, k: o.get(k) if isinstance(o, dict) else None
+model = " ".join((g(g(j, "model"), "display_name") or "Claude").splitlines())
+d = g(g(j, "workspace"), "current_dir") or ""
+rem = g(g(j, "context_window"), "remaining_percentage")
+effort = g(g(j, "effort"), "level") or ""
+# Round here, not in bash: bash printf %.0f reads "72.4" against the shell
+# locale and errors out where the decimal separator is a comma. Half up, as before.
+sys.stdout.write("\n".join([model, d, "" if rem is None else str(int(float(rem) + 0.5)), effort]))
 ')
 
 model=$(printf '%s' "$parsed" | sed -n '1p')
