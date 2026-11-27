@@ -38,7 +38,11 @@ $H --all --deadline 30m -- taskset -c 0,1 eng/stress-tests.sh         # stress: 
   load (`uptime`), and who holds the slots (`fuser -v ~/.herdr/worktrees/<repo>/heavy.*`).
 - A command holding a slot with little CPU time gained (`ps -o etimes,time -p <pid>`) is hung, not slow. Tell its
   worker to take stacks and kill it; don't wait for its deadline.
-- Load well above the core count means something is skipping `heavy.sh`. Find it and tell its worker.
+- Don't judge by load average: a stress run pinned to two cores pushes it near 100 by itself. Look for heavy processes
+  (`dotnet build`, test hosts, `eslint`, `vitest`, `playwright`) whose worker holds no slot (`fuser -v` above); that
+  worker is skipping `heavy.sh`.
+- When changing the locking scheme, wait for every run on the old lock to end first: two schemes don't exclude each
+  other.
 
 ## Briefs
 
